@@ -9,27 +9,24 @@ and change the electrical resistance. That can then be measured.
 Which gas molecules is determined by material and temperature. For the
 correct temperature ensures a built-in heating.
 
-The MQ-7 sensor is already on a small circuit board with some
-Built-in components, the manufacturer calls the whole "Flying Fish",
+The MQ-7 sensor is available on a small circuit board with some
+Built-in components, the manufacturer calls the whole gadget "Flying Fish",
 for whatever reason. The circuit evaluates the resistance and switches
 at an adjustable threshold a light emitting diode. Dimensions,
-Operating voltage and one analog and one digital output, the
-should be easy.
+Operating voltage and one analog and one digital output.
 
 The data sheet of the MQ-7 sensor, on the other hand, raises a few questions. It
 gives a cycle of 60 seconds heating with 5V without measuring (it will
 practically the sensor "cleaned") and then 90 seconds heating with 1.4V
-(during this time can be measured) before. 
+(during this time can be measured) before. The "Flying Fish" doesn't run such a complicated scenario. I doubt thet the "Flying Fish" is usable for practical CO detection at all.
 
-The ATtiny controls the following measurement sequence:
+A ATtiny is able to control the measurement using a plain MQ-7 sensor following the usage sequence below:
 
-1.) preheat. The sensor is set to the default value for 90 seconds
-Heating voltage. LED lights up yellow.
+1.) preheat. The sensor is set to the default heating voltage (5.0V) for 90 seconds. LED lights up yellow.
 
-2.) Calibrate. The specified heating / measuring cycle is run through, the resistance values are stored at fixed intervals. This will then be used in later operation as "characteristic" LED lights up green
+2.) Calibration. The specified (datasheet)  heating / measuring cycle is run once, the resistance values are stored at fixed intervals. This will then be used in later operation as "characteristic". LED lights up green
 
-3.) Operation. The specified heating / measuring cycle is run through. The measured values are stored and compared with the "characteristic curve".
-Deviations are detected and reported according to their size and duration. LED flashes green briefly in a long interval. (Everything OK) or red (deviation from the characteristic found). In the event of deviations above a limit value or an absolute value (according to the characteristic from the data sheet), the LED flashes / lights up red and a warning tone sounds in the headset.
+3.) Operation. The specified heating / measuring cycle is run. The measured values are stored and compared with the "characteristic curve". Deviations are detected and reported according to their size and duration. LED flashes green briefly in a long interval. (Everything OK) or red (deviation from the characteristic found). In the event of deviations above a limit value or an absolute value (according to the characteristic from the data sheet), the LED flashes / lights up red and a warning tone sounds in the headset.
 
 The sensitivity of the circuit is impressive. One lit tea light next to the sensor box is registered.
 
