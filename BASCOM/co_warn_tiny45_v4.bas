@@ -2,9 +2,16 @@
 '
 ' Software fuer den CO-Warner mit MQ-7
 '
-' (c) 2018 gruen-design.de
+' (c) 2018-2020 gruen-design.de
 '
-' V4.0
+' V9.0c
+'
+' Feinere Messaufloesung
+' Glaettung der Messwerte, wir vergleichen mit dem Mittelw der letzten 3 Messungen
+' Messungen alle 2 Sekunden
+' Auswertefenster zwischen nur in der Messphase
+' Intelligentere Beep-Steuerung
+' Protokollierung der Messung im EEPROM
 '
 '----------------------------------------------------------
 
@@ -15,35 +22,42 @@ $crystal = 8000000                                          'No Quarz: 8 MHz
 
 $hwstack = 64                                               ' default use 32 for the hardware stack
 $swstack = 64                                               ' default use 10 for the SW stack
-$framesize = 64                                             ' default use 40 for the frame space
-
+$framesize = 96                                             ' default use 40 for the frame space
 
 Declare Sub Beep(byval Dauer As Integer)                    ' Eine Tonausgabe auf PORTB.3
+Declare Function Messme() As Byte                           ' Messen am ADC,
 
 Dim Spann As Byte
+Dim Bctr As Integer
 
-Dim Memcount As Byte
-Dim Mempointer As Byte                                      ' Attiny45 hat nur 256 EEPROM Zellen
+Dim Mwert As Byte
+Dim Memptr As Byte                                          ' Attiny45 hat nur 256 EEPROM Zellen
 
-Dim Z As Integer
-Dim Testloop As Integer
-
-Dim 5volt As Byte
-Dim 14volt As Byte
+Dim Z As Integer                                            ' Zaehler fuer den Timer 1,
+Dim Testloop As Byte
 
 Dim Kalibrieren As Bit
-Dim Ind As Integer
+
 Dim Iind As Integer
-Dim Vergleich As Byte
+Dim Vergleich As Integer
 
-Dim Kennfeld(31) As Byte                                    ' Kennfeldansatz, wir speichern das erst mal nur im Speicher
-Dim Permanent(256) As Eram Byte
+Dim Sum As Integer
 
+Dim Alarmctr As Byte                                        ' Zaehler, Ob Wir Schon Einen Alarm Hatten , Damit Wir Nicht In Ein Dauerbeep Verfallen
 
-Dim Delta As Integer
+Dim Messdat(256) As Eram Byte
 
-Spann = Adch                                                ' Schon mal auslesen aber erst mal ignorieren
+Dim Messf(3) As Integer                                     ' Zwischenspeicher fuer die letzten 3 Messungen
 
+' ======================================
+' Einstellwerte
+' ======================================
+
+Const Messtoleranz = 3
+
+Osccal = 85                                                 ' Kalibrierung des RC Oscillators, Dieser Wert muss hinexperimentiert werden
+Const 5volt = 60
+Const 14volt = 206                                          ' 206 = 1.264
 
 Ddrb = &B00001111                                           'PB0-3 Ausgang, ...PB4..: Eingang
 
@@ -54,7 +68,7 @@ Ddrb = &B00001111                                           'PB0-3 Ausgang, ...P
 ' Ddrb.3 = 1                     ' Beep
 
 
-' Timer0 verwenden wir als PWM für die 5V/1.4V
+' Timer0 verwenden wir als PWM fÃ¼r die 5V/1.4V
 ' Das ganze kommt dann am B0 an (Pin5)
 Config Timer0 = Pwm , Prescale = 1 , Compare A Pwm = Clear Down
 
@@ -68,9 +82,9 @@ Config Timer0 = Pwm , Prescale = 1 , Compare A Pwm = Clear Down
 
 ' Admux = &B01100010                                          'Bits7+6=01: Aref ist intern verbunden
 '                      'Bit5=1: LeftAdjust, nur 8 Bit in ADCH
-'                     'Bits1...0=0010: Pin ADB4 als Input  wählen
+'                     'Bits1...0=0010: Pin ADB4 als Input  wÃ¤hlen
 
-Admux = &B10110010
+Admux = &B00110010
 
 ' Adcsra = &B11100010                                         'Bit7=1:AdcOn,Bit6=1:Start,Bit5=1:Frei
 '                      'Bits2+1+0=010: AdcClock=AvrClock/4
@@ -78,20 +92,13 @@ Admux = &B10110010
 Adcsra = &B11100100                                         ' Takt / 16
 
 
-' Dmemcount = 0
-Mempointer = 0
-
-Z = 0
-Testloop = 0
-
-' Konstanten fuer den PWM Timer
-5volt = 38
-14volt = 200                                                ' 206 = 1.264
+' Vorwaermen ohne Messen - Ein kompletter Zyklus 60+90 Sekunden
 
 Compare0a = 5volt
 
-' Vorwaermen ohne Messen - Ein kompletter Zyklus 60+90 Sekunden
-' zuallererst brauchen wir 1 Minute Ruhe
+Waitms 1000
+
+' Test der LED
 ' Rot
 Portb.1 = 1
 Portb.2 = 0
@@ -104,7 +111,9 @@ Portb.2 = 1
 
 Waitms 300
 
-' Rot
+'  1 Minute Heizspannung
+
+' LED Rot
 Portb.1 = 1
 Portb.2 = 0
 
@@ -113,6 +122,8 @@ Call Beep(100)
 
 Wait 60
 
+'  90 Sekunden Messspannung
+
 ' Gruen + Rot = GELB
 Portb.1 = 1
 Portb.2 = 1
@@ -120,122 +131,193 @@ Compare0a = 14volt
 
 Wait 90
 
+' Bereit zur Arbeit!
+
+Kalibrieren = 1
+Z = 0
+Testloop = 0
+Memptr = 0
+Alarmctr = 0
+Vergleich = 0
+
+' Messfeld zuruecksetzen
+Messf(1) = 0
+Messf(2) = Adch
+Waitms 100
+Messf(3) = Adch
+
+
 ' Portb.3 = 0
 Portb.1 = 0                                                 ' LED aus
 Portb.2 = 0
 Compare0a = 5volt
 
-Kalibrieren = 1
-' Summeheiz = 0
-' Summemess = 0
 
-' Die Basis ist ein 5s Grundtakt,
+' Die Basis ist ein 1s Grundtakt,
 ' Dazu braucen wir einen Timer1
 
 ' 8MHZ mit prescale 1024 ergibt 7812 Ticks,
-' das sind 30 volle Durchläufe pro Sekunde oder 153 Durchläufe für 5 Sekunden
+' das sind 30 volle DurchlÃ¤ufe pro Sekunde
 
 Config Timer1 = Timer , Prescale = 1024
 Enable Timer1
 Enable Interrupts
 
-On Timer1 Timer5s
+On Timer1 Timer2s
 
 ' Endlosschleife
 Do                                                          'Hauptschleife
 Loop
 
 
-' Das hier ist der interrupt 3600/256 mal in der Sekunde.
-Timer5s:
+' Ende des Programms (falls es sowas ueberhaupt gibt)
 
-Incr Z
+' ####################################################
+' # Unterprogramme und Funktionen
+' ####################################################
 
-Portb.2 = Kalibrieren                                       'waehrend der Kalibrierphase ist die LED grün
+' ####################################################
+' Das hier ist der interrupt 30 mal in der Sekunde.
+' ####################################################
+Timer2s:
 
-If Z > 152 Then
-   ' 5 Sekunden sind um
+Incr Z                                                      ' Ein Nachteiler um auf die 2 Sekunden zu kommen
 
-   Spann = Adch                                             'Aktuelles AD-HiByte Lesen
+If Z > 60 Then
+   ' 2 Sekunden sind um, die naechste Messung steht an
 
-   Incr Testloop
+   Portb.2 = Kalibrieren                                    'waehrend der Kalibrierphase ist die LED grÃ¼n
+
+   Incr Testloop                                            ' Die Nummer der Messung in der 150-Sekunden Schleife, laeuft von 1 - 75
+
+   ' Spann = Adch                                             'Messen und den Mittelwert berechnen,
+   Spann = Messme()
+
+   ' Wir speichern den Testwert ab
+
+   ' Den Bereich von 1-75 Ã¼berschreiben wir nicht (Kennfeld)
+   If Memptr > 250 Then
+        Memptr = 75
+   End If
 
    ' Genau jetzt speichern wir die gemessene Spannung im EEPROM
-   If Mempointer > 251 Then
-        Mempointer = 0
+   Incr Memptr
+   Messdat(memptr) = Spann
+
+   ' Im Messmodus muessen wir jetzt vergleichen und reagieren,
+   If Kalibrieren = 0 Then
+     If Testloop > 33 And Testloop < 73 Then                ' Wir betrachten nur die Messungen 34-72
+        ' Die Messwerte in der Heizphase sind nicht sehr aussagekraeftig,
+        ' Besonders im Umschaltmoment und den folgenden Sekunden auch sehr schwankend
+        ' Deshalb betrachten wir sie nicht
+
+        Portb.1 = 0                                         ' LED ROT -  AUS
+
+        ' Mittelwert aus dem Kennfeld
+        Mwert = Messdat(testloop)
+
+        Vergleich = Spann - Mwert                           ' Im Alarmfall steigt die Spannung
+        ' Vergleich = Abs(vergleich)
+
+     End If
    End If
 
-   Incr Mempointer
-   Permanent(mempointer) = Spann
-   Permanent(256) = Mempointer
-
-
-   ' Kennfeldansatz, wir speichern beim Kalibrieren alle gemessenen Werte im Kennfeld
-   ' Und im Scharfen einsatz vergleichen wir damit
-   If Kalibrieren = 1 Then
-      Kennfeld(testloop) = Spann
-   Else
-
-     ' Hier vergleichen wir jetzt
-     Vergleich = Kennfeld(testloop)
-     Vergleich = Vergleich + 1                              ' Etwas Toleranz
-     If Spann < 2 Or Spann < Vergleich Then
-         ' Kein Alarm, alles gut
-         Portb.1 = 0
-     Else
-         ' hier koennte ein Alarm passieren, 20 Stufen (Wir haben am Ende 5 Sekunden)
-         ' wir haben ein Delta von X, 20 bedeutet Weltuntergang
-         Delta = Spann - Vergleich
-         For Ind = 1 To 20
-             Delta = Delta - 1
-             If Delta > 0 Then
-                Portb.1 = 1                                 ' LED ROT
-                Call Beep(240)
-                ' Waitms 200
-             Else
-                Portb.1 = 0
-             End If
-         Next Ind
-      End If
-      Portb.1 = 0                                           ' LED ROT -  AUS
-   End If
-
-
-   If Testloop = 12 Then
+   If Testloop = 30 Then
      ' =============================================
      ' Umschalten auf Messen
      ' =============================================
      ' Auf Messpannung = 1.4 V stellen
      Compare0a = 14volt
+     Alarmctr = 5                                           ' beim Umschalten nach Messen beepen wir noch mal, falls wir vor dem Heizen einen Alarm hattem
    End If
 
 
-   If Testloop = 31 Then
+   If Testloop = 75 Then
      ' =============================================
      ' Die 90 Sekunden Messfenster sind rum, wir fangen wieder vorn an
      Testloop = 0
      Compare0a = 5volt
      If Kalibrieren = 1 Then
-           Call Beep(50)
-           Kalibrieren = 0
-           Portb.2 = 0
-           ' Kalibrierphase zuende
+        Kalibrieren = 0
+        Call Beep(50)
+        Memptr = 75
+        ' Kalibrierphase zuende
      End If
-     ' Markieren - Ende des Zyklus im EEPROM
-     Incr Mempointer
-     Permanent(mempointer) = 0
+   End If
 
+   ' =============================================
+   ' Anzeigen Beep und Rotlicht oder Blinzeln
+   ' =============================================
+   If Vergleich > Messtoleranz Then                         ' Etwas Toleranz
+
+        ' Im Alarmfall speichern wir die Messwerte
+        ' Messdat(256) = Spann
+        ' Messdat(255) = Mwert
+        ' Messdat(254) = Vergleich
+        ' Messdat(253) = Testloop
+        ' Messdat(252) = Memptr
+        ' Messdat(251) = Alarmctr
+
+        If Alarmctr < 63 Then                               ' Wir Zaehlen die Beeps, Beepen nur maximal 10 mal hintereinander
+           Incr Alarmctr
+        End If
+
+        ' Die Laenge des Pieptons ist vom Vergleich abhaengig.
+
+        Bctr = Vergleich * 50
+
+        If Bctr > 1600 Then                                 ' Maximal 1.5 Sekunden beep
+            Bctr = 1600
+        End If
+
+        Portb.1 = 1                                         ' LED ROT
+        If Alarmctr < 10 Then                               ' Wir Beepen nur maximal 9 mal hintereinander
+           Call Beep(bctr)                                  ' kein Dauerton bitte
+        Else
+           Waitms Bctr
+        End If
+
+        Portb.1 = 0
+   Else                                                     ' Kein Alarm (mehr)
+        Alarmctr = 0
+        Bctr = Testloop Mod 5
+
+        If Bctr = 0 Then
+            Portb.2 = Not Portb.2                           ' Alle 10 s Kurz gruen Blinzeln
+            Waitms 25
+            Portb.2 = Not Portb.2
+        End If
    End If
 
    Z = 0
-   Portb.2 = Not Portb.2                                    ' Kurz gruen Blinzeln
-   Waitms 5
-   Portb.2 = Not Portb.2
 
 End If
 
 Return
 
+
+
+' ####################################################
+' Messen, wir messen und liefern den Mittelwert der letzten 3 Messungen
+' ####################################################
+Function Messme() As Byte                                   ' Messen am ADC,
+   Sum = Adch                                               'Aktuelles AD-HiByte Lesen
+
+   Messf(1) = Messf(2)
+   Messf(2) = Messf(3)
+   Messf(3) = Sum
+
+   Sum = Sum + Messf(2)
+   Sum = Sum + Messf(1)
+
+   Sum = Sum / 3
+   Messme = Sum Mod 256
+End Function
+
+
+' ####################################################
+' Ein Beep vorgegebener Laenge
+' ####################################################
 Sub Beep(byval Dauer As Integer)                            ' Eine Tonausgabe auf PORTB.3
    For Iind = 1 To Dauer
    Portb.3 = Not Portb.3
