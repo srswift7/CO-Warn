@@ -4,7 +4,7 @@
 '
 ' (c) 2018-2020 gruen-design.de
 '
-' V9.0c
+' V11.0b
 '
 ' Feinere Messaufloesung
 ' Glaettung der Messwerte, wir vergleichen mit dem Mittelw der letzten 3 Messungen
@@ -53,8 +53,14 @@ Dim Messf(3) As Integer                                     ' Zwischenspeicher f
 ' Einstellwerte
 ' ======================================
 
-Const Messtoleranz = 3
+Const Messtoleranz = 5
 
+' Beta
+' Osccal = 117                                                ' Kalibrierung des RC Oscillators, Dieser Wert muss hinexperimentiert werden
+' Const 5volt = 79
+' Const 14volt = 210                                          ' 206 = 1.264
+
+' Prod!
 Osccal = 85                                                 ' Kalibrierung des RC Oscillators, Dieser Wert muss hinexperimentiert werden
 Const 5volt = 60
 Const 14volt = 206                                          ' 206 = 1.264
@@ -68,7 +74,7 @@ Ddrb = &B00001111                                           'PB0-3 Ausgang, ...P
 ' Ddrb.3 = 1                     ' Beep
 
 
-' Timer0 verwenden wir als PWM fÃ¼r die 5V/1.4V
+' Timer0 verwenden wir als PWM für die 5V/1.4V
 ' Das ganze kommt dann am B0 an (Pin5)
 Config Timer0 = Pwm , Prescale = 1 , Compare A Pwm = Clear Down
 
@@ -82,7 +88,7 @@ Config Timer0 = Pwm , Prescale = 1 , Compare A Pwm = Clear Down
 
 ' Admux = &B01100010                                          'Bits7+6=01: Aref ist intern verbunden
 '                      'Bit5=1: LeftAdjust, nur 8 Bit in ADCH
-'                     'Bits1...0=0010: Pin ADB4 als Input  wÃ¤hlen
+'                     'Bits1...0=0010: Pin ADB4 als Input  wählen
 
 Admux = &B00110010
 
@@ -157,7 +163,7 @@ Compare0a = 5volt
 ' Dazu braucen wir einen Timer1
 
 ' 8MHZ mit prescale 1024 ergibt 7812 Ticks,
-' das sind 30 volle DurchlÃ¤ufe pro Sekunde
+' das sind 30 volle Durchläufe pro Sekunde
 
 Config Timer1 = Timer , Prescale = 1024
 Enable Timer1
@@ -186,7 +192,7 @@ Incr Z                                                      ' Ein Nachteiler um 
 If Z > 60 Then
    ' 2 Sekunden sind um, die naechste Messung steht an
 
-   Portb.2 = Kalibrieren                                    'waehrend der Kalibrierphase ist die LED grÃ¼n
+   Portb.2 = Kalibrieren                                    'waehrend der Kalibrierphase ist die LED grün
 
    Incr Testloop                                            ' Die Nummer der Messung in der 150-Sekunden Schleife, laeuft von 1 - 75
 
@@ -195,7 +201,7 @@ If Z > 60 Then
 
    ' Wir speichern den Testwert ab
 
-   ' Den Bereich von 1-75 Ã¼berschreiben wir nicht (Kennfeld)
+   ' Den Bereich von 1-75 überschreiben wir nicht (Kennfeld)
    If Memptr > 250 Then
         Memptr = 75
    End If
@@ -228,7 +234,7 @@ If Z > 60 Then
      ' =============================================
      ' Auf Messpannung = 1.4 V stellen
      Compare0a = 14volt
-     Alarmctr = 5                                           ' beim Umschalten nach Messen beepen wir noch mal, falls wir vor dem Heizen einen Alarm hattem
+     Alarmctr = 4                                           ' beim Umschalten nach Messen beepen wir noch mal, falls wir vor dem Heizen einen Alarm hattem
    End If
 
 
@@ -250,6 +256,8 @@ If Z > 60 Then
    ' =============================================
    If Vergleich > Messtoleranz Then                         ' Etwas Toleranz
 
+        ' Alarm. Wie lange / wie laut wir Piepen machen wir nicht vom Vergleich, sondern vom Absolutwert der Spannung abhaengig.
+
         ' Im Alarmfall speichern wir die Messwerte
         ' Messdat(256) = Spann
         ' Messdat(255) = Mwert
@@ -258,21 +266,22 @@ If Z > 60 Then
         ' Messdat(252) = Memptr
         ' Messdat(251) = Alarmctr
 
-        If Alarmctr < 63 Then                               ' Wir Zaehlen die Beeps, Beepen nur maximal 10 mal hintereinander
-           Incr Alarmctr
-        End If
+        ' Die Laenge des Pieptons berechnen wir aus der Spannung
+        ' valide Werte sind zwischen 175 (0.05s ) - 255 (2s)
+        If Spann > 174 then
+           Bctr = Spann - 175
+        else
+           Bctr = 0
+        end if
 
-        ' Die Laenge des Pieptons ist vom Vergleich abhaengig.
+        Bctr = Bctr * 24
 
-        Bctr = Vergleich * 50
-
-        If Bctr > 1600 Then                                 ' Maximal 1.5 Sekunden beep
-            Bctr = 1600
-        End If
+        Bctr = Bctr + 50        .
 
         Portb.1 = 1                                         ' LED ROT
-        If Alarmctr < 10 Then                               ' Wir Beepen nur maximal 9 mal hintereinander
+        If Alarmctr < 6 AND Bctr > 450 Then               ' Wir Beepen nur maximal 6 mal hintereinander     und nur wenn der Schwellwert > 450 d.h. Spann > 190
            Call Beep(bctr)                                  ' kein Dauerton bitte
+           Incr Alarmctr
         Else
            Waitms Bctr
         End If
